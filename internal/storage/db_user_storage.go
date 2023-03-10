@@ -23,7 +23,7 @@ func NewDBUserStorage(db *sql.DB) (*DBUserStorage, error) {
 	if err != nil {
 		return nil, err
 	}
-	stmtInsertFirstTransaction, err := db.Prepare("INSERT INTO transactions (id, number, user_id, sum, balance, withdrawals) VALUES (0, null, $1, 0, 0, 0)")
+	stmtInsertFirstTransaction, err := db.Prepare("INSERT INTO transactions (id, order_number, user_id, sum, balance, withdrawals) VALUES (0, null, $1, 0, 0, 0)")
 	if err != nil {
 		return nil, err
 	}

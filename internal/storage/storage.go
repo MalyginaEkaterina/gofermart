@@ -23,7 +23,7 @@ type UserStorage interface {
 type OrderStorage interface {
 	AddOrder(ctx context.Context, userID internal.UserID, number internal.OrderNumber) error
 	GetOrderUser(ctx context.Context, number internal.OrderNumber) (internal.UserID, error)
-	GetOrders(ctx context.Context, userID internal.UserID) ([]internal.Order, error)
+	GetOrdersByUser(ctx context.Context, userID internal.UserID) ([]internal.Order, error)
 	GetNotProcessedOrders(ctx context.Context) ([]internal.ProcessingOrder, error)
 	UpdateOrderStatus(ctx context.Context, order internal.ProcessingOrder) error
 	UpdateOrderAccrual(ctx context.Context, order internal.ProcessingOrder) error

@@ -51,7 +51,7 @@ func NewDBOrderStorage(db *sql.DB) (*DBOrderStorage, error) {
 		return nil, err
 	}
 	const insertCreditTrSQL = `
-		INSERT INTO transactions (id, number, user_id, sum, balance, withdrawals)
+		INSERT INTO transactions (id, order_number, user_id, sum, balance, withdrawals)
 		SELECT id+1,
 				 $1,
 				 $2,
@@ -71,11 +71,11 @@ func NewDBOrderStorage(db *sql.DB) (*DBOrderStorage, error) {
 		return nil, err
 	}
 	const insertDebitTrSQL = `
-		INSERT INTO transactions (id, number, user_id, sum, balance, withdrawals)
+		INSERT INTO transactions (id, order_number, user_id, sum, balance, withdrawals)
 		(SELECT id + 1,
 			   $1,
 			   $2,
-			   -1.0 * $3,
+			   -1 * $3,
 			   balance - $3,
 			   withdrawals + $3
 		FROM
@@ -92,7 +92,7 @@ func NewDBOrderStorage(db *sql.DB) (*DBOrderStorage, error) {
 	if err != nil {
 		return nil, err
 	}
-	stmtGetWithdrawalsByUser, err := db.Prepare("SELECT number, -1*sum, processed_at FROM transactions WHERE user_id = $1 AND sum < 0 ORDER BY processed_at")
+	stmtGetWithdrawalsByUser, err := db.Prepare("SELECT order_number, -1*sum, processed_at FROM transactions WHERE user_id = $1 AND sum < 0 ORDER BY processed_at")
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func (d *DBOrderStorage) GetOrderUser(ctx context.Context, number internal.Order
 	return userID, nil
 }
 
-func (d *DBOrderStorage) GetOrders(ctx context.Context, userID internal.UserID) ([]internal.Order, error) {
+func (d *DBOrderStorage) GetOrdersByUser(ctx context.Context, userID internal.UserID) ([]internal.Order, error) {
 	rows, err := d.getOrdersByUser.QueryContext(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -159,11 +159,13 @@ func (d *DBOrderStorage) GetOrders(ctx context.Context, userID internal.UserID) 
 	for rows.Next() {
 		order := internal.Order{}
 		var uploadTime time.Time
-		err = rows.Scan(&order.Number, &order.Status, &order.Accrual, &uploadTime)
+		var accrual sql.NullInt64
+		err = rows.Scan(&order.Number, &order.Status, &accrual, &uploadTime)
 		if err != nil {
 			return nil, err
 		}
 		order.UploadedAt = uploadTime.Format(time.RFC3339)
+		order.Accrual = toFloatPtr(accrual)
 		userOrders = append(userOrders, order)
 	}
 
@@ -173,6 +175,32 @@ func (d *DBOrderStorage) GetOrders(ctx context.Context, userID internal.UserID) 
 	}
 
 	return userOrders, nil
+}
+
+func toFloatPtr(sum sql.NullInt64) *float64 {
+	if !sum.Valid {
+		return nil
+	}
+	sumFloat := toFloat(sum.Int64)
+	return &sumFloat
+}
+
+func fromFloatPtr(sum *float64) sql.NullInt64 {
+	if sum == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{
+		Int64: fromFloat(*sum),
+		Valid: true,
+	}
+}
+
+func toFloat(sum int64) float64 {
+	return float64(sum) / 100
+}
+
+func fromFloat(sum float64) int64 {
+	return int64(sum * 100)
 }
 
 func (d *DBOrderStorage) GetNotProcessedOrders(ctx context.Context) ([]internal.ProcessingOrder, error) {
@@ -185,10 +213,12 @@ func (d *DBOrderStorage) GetNotProcessedOrders(ctx context.Context) ([]internal.
 
 	for rows.Next() {
 		order := internal.ProcessingOrder{}
-		err = rows.Scan(&order.Number, &order.Status, &order.Accrual, &order.UserID)
+		var accrual sql.NullInt64
+		err = rows.Scan(&order.Number, &order.Status, &accrual, &order.UserID)
 		if err != nil {
 			return nil, err
 		}
+		order.Accrual = toFloatPtr(accrual)
 		orders = append(orders, order)
 	}
 
@@ -215,12 +245,12 @@ func (d *DBOrderStorage) UpdateOrderAccrual(ctx context.Context, order internal.
 	}
 	defer tx.Rollback()
 	txUpdateOrderStmt := tx.StmtContext(ctx, d.updateOrder)
-	_, err = txUpdateOrderStmt.ExecContext(ctx, order.Status, order.Accrual, order.Number)
+	_, err = txUpdateOrderStmt.ExecContext(ctx, order.Status, fromFloatPtr(order.Accrual), order.Number)
 	if err != nil {
 		return fmt.Errorf("update order error: %w", err)
 	}
 	txInsertTrStmt := tx.StmtContext(ctx, d.insertCreditTransaction)
-	_, err = txInsertTrStmt.ExecContext(ctx, order.Number, order.UserID, order.Accrual)
+	_, err = txInsertTrStmt.ExecContext(ctx, order.Number, order.UserID, fromFloatPtr(order.Accrual))
 	if err != nil {
 		return fmt.Errorf("insert credit transaction error: %w", err)
 	}
@@ -234,15 +264,19 @@ func (d *DBOrderStorage) UpdateOrderAccrual(ctx context.Context, order internal.
 func (d *DBOrderStorage) GetBalance(ctx context.Context, userID internal.UserID) (internal.Balance, error) {
 	row := d.getBalance.QueryRowContext(ctx, userID)
 	var balance internal.Balance
-	err := row.Scan(&balance.Current, &balance.Withdrawn)
+	var current int64
+	var withdrawn int64
+	err := row.Scan(&current, &withdrawn)
 	if err != nil {
 		return balance, fmt.Errorf("get balance error: %w", err)
 	}
+	balance.Current = toFloat(current)
+	balance.Withdrawn = toFloat(withdrawn)
 	return balance, nil
 }
 
 func (d *DBOrderStorage) Withdraw(ctx context.Context, withdraw internal.WithdrawReq) error {
-	row := d.insertDebitTransaction.QueryRowContext(ctx, withdraw.Number, withdraw.UserID, withdraw.Sum)
+	row := d.insertDebitTransaction.QueryRowContext(ctx, withdraw.Number, withdraw.UserID, fromFloat(withdraw.Sum))
 	var id int
 	err := row.Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -264,11 +298,13 @@ func (d *DBOrderStorage) GetWithdrawals(ctx context.Context, userID internal.Use
 	for rows.Next() {
 		withdrawal := internal.Withdrawal{}
 		var processedTime time.Time
-		err = rows.Scan(&withdrawal.Number, &withdrawal.Sum, &processedTime)
+		var sum int64
+		err = rows.Scan(&withdrawal.Number, &sum, &processedTime)
 		if err != nil {
 			return nil, err
 		}
 		withdrawal.ProcessedAt = processedTime.Format(time.RFC3339)
+		withdrawal.Sum = toFloat(sum)
 		userWithdrawals = append(userWithdrawals, withdrawal)
 	}
 

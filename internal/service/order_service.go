@@ -48,7 +48,7 @@ func (o *OrderServiceImpl) UploadOrder(ctx context.Context, userID internal.User
 }
 
 func (o *OrderServiceImpl) GetOrders(ctx context.Context, userID internal.UserID) ([]internal.Order, error) {
-	return o.Store.GetOrders(ctx, userID)
+	return o.Store.GetOrdersByUser(ctx, userID)
 }
 
 func (o *OrderServiceImpl) GetBalance(ctx context.Context, userID internal.UserID) (internal.Balance, error) {

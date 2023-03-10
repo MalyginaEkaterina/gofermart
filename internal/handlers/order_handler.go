@@ -73,6 +73,9 @@ func (o *OrderHandler) Withdraw(writer http.ResponseWriter, req *http.Request) {
 	if !unmarshalRequest(writer, req, &withdrawReq) {
 		return
 	}
+	if !o.ValidateWithdrawReq(writer, withdrawReq) {
+		return
+	}
 	withdrawReq.UserID = GetUserIDFromContext(req.Context())
 	err := o.orderService.Withdraw(req.Context(), withdrawReq)
 	if errors.Is(err, service.ErrIncorrectOrderNumber) {
@@ -102,4 +105,16 @@ func (o *OrderHandler) GetWithdrawals(writer http.ResponseWriter, req *http.Requ
 		return
 	}
 	marshalResponse(writer, http.StatusOK, withdrawals)
+}
+
+func (o *OrderHandler) ValidateWithdrawReq(writer http.ResponseWriter, data internal.WithdrawReq) bool {
+	if data.Number == "" {
+		http.Error(writer, "Order is required", http.StatusBadRequest)
+		return false
+	}
+	if data.Sum == 0 {
+		http.Error(writer, "Sum is required", http.StatusBadRequest)
+		return false
+	}
+	return true
 }

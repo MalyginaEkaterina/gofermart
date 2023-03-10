@@ -51,6 +51,9 @@ func (a *AuthHandler) RegisterUser(writer http.ResponseWriter, req *http.Request
 	if !unmarshalRequest(writer, req, &registerReq) {
 		return
 	}
+	if !a.ValidateAuthData(writer, registerReq) {
+		return
+	}
 	token, err := a.authService.RegisterUser(req.Context(), registerReq.Login, registerReq.Password)
 	if errors.Is(err, storage.ErrAlreadyExists) {
 		http.Error(writer, err.Error(), http.StatusConflict)
@@ -69,6 +72,9 @@ func (a *AuthHandler) AuthUser(writer http.ResponseWriter, req *http.Request) {
 	if !unmarshalRequest(writer, req, &authReq) {
 		return
 	}
+	if !a.ValidateAuthData(writer, authReq) {
+		return
+	}
 	token, err := a.authService.AuthUser(req.Context(), authReq.Login, authReq.Password)
 	if errors.Is(err, storage.ErrNotFound) || errors.Is(err, service.ErrIncorrectPassword) {
 		http.Error(writer, err.Error(), http.StatusUnauthorized)
@@ -80,4 +86,16 @@ func (a *AuthHandler) AuthUser(writer http.ResponseWriter, req *http.Request) {
 	}
 	writer.Header().Set(authHeader, string(token))
 	writer.WriteHeader(http.StatusOK)
+}
+
+func (a *AuthHandler) ValidateAuthData(writer http.ResponseWriter, data AuthData) bool {
+	if data.Login == "" {
+		http.Error(writer, "Login is required", http.StatusBadRequest)
+		return false
+	}
+	if data.Password == "" {
+		http.Error(writer, "Password is required", http.StatusBadRequest)
+		return false
+	}
+	return true
 }
